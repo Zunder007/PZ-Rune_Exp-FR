@@ -2,14 +2,22 @@ ISExpBar = ISPanel:derive("ISExpBar");
 
 function ISExpBar:new(playerIndex, player)
 	-- Core
+	local fontSize, fontHeightMed;
+    fontSize = getCore():getOptionFontSize();
+    fontHeightMedium = getTextManager():getFontHeight(UIFont.Medium);
+
 	local bw, bh;
-	bw = 140;
-	bh = 38;
+	-- bw = 140;
+	-- bh = 38;
+	bw = 140 + (15 * (fontSize-1));
+	bh = 18 + fontHeightMedium;
 
 	local barHandle = {};
 	barHandle = ISPanel:new(getCore():getScreenWidth()-400, 200, bw, bh);
 	setmetatable(barHandle, self);
     self.__index = self;
+
+
 
 	barHandle.playerIndex = playerIndex;
 	barHandle.player = player;
@@ -29,7 +37,7 @@ function ISExpBar:new(playerIndex, player)
 
 	-- Actual experience bar
 	barHandle.bar_w = barHandle.width - 2;
-	barHandle.bar_h = 10
+	barHandle.bar_h = 10 + (1 * (fontSize-1));
 
 	barHandle.bar_x = 1;
 	barHandle.bar_y = barHandle.height - barHandle.bar_h - 1;
@@ -40,7 +48,7 @@ function ISExpBar:new(playerIndex, player)
 	barHandle.tooltip_text_offset_y = 1;
 	barHandle.tooltip_x = -20;
 	barHandle.tooltip_y = barHandle.height + 5;
-	barHandle.tooltip_w = barHandle.width + 40;
+	barHandle.tooltip_w = barHandle.width + 40 + (25 * (fontSize-1));
 	barHandle.tooltip_h = (barHandle.tooltip_text_offset_y * 2) + (getTextManager():getFontHeight(UIFont.Small) * 6);
 	barHandle.tooltip_colour = {r=1.0, g=0.98, b=0.61};
 
@@ -75,8 +83,12 @@ function ISExpBar:new(playerIndex, player)
 
 	-- Skill and skill icons
 	barHandle.icon_x = 4;
-	barHandle.icon_y = 2;
+	--barHandle.icon_y = 2;
 	barHandle.icon_wh = 25;
+
+	barHandle.icon_y = math.max(2, math.floor( ((barHandle.bar_y) * .5) - (barHandle.icon_wh * .5) ));
+	barHandle.icon_text_y = 2 - (1 * fontSize);
+	barHandle.icon_drop_y_offset = 3 * (fontSize-1);
 
 	barHandle.sprites = {};
 	barHandle.perkIndices = {};
@@ -125,6 +137,20 @@ function ISExpBar:new(playerIndex, player)
 		[21] = "Tailoring", [22] = "Aiming",[ 23] = "Reloading", [24] = "Fishing", [25] = "Trapping", 
 		[26] = "PlantScavenging" 
 	};
+
+
+	-- Adjust the size of the tooltip window based on the longest skill name
+	barHandle.longestNameWidth = 0;
+	local nameWidth;
+	for skill_type in pairs(barHandle.conf_trackSkill) do
+		nameWidth = getTextManager():MeasureStringX(UIFont.Small, barHandle:getPerkNameFromType(skill_type));
+		if nameWidth > barHandle.longestNameWidth then
+			barHandle.longestNameWidth = nameWidth;
+		end
+	end
+
+	barHandle.tooltip_w = math.max(barHandle.tooltip_w, barHandle.longestNameWidth + 80 + (20 * (fontSize-1)));
+	barHandle.tooltip_x = -math.floor((barHandle.tooltip_w - barHandle.width) * .5);
 
 	-- Exp drops
 	barHandle.drop_distance = 100; -- Vertical distance from the xp bar that the xp drops will initially appear
@@ -211,7 +237,14 @@ end
 
 function ISExpBar:addDropdownPanel()
 	local panel;
-	panel = ISExpDropdown:new(200, 200, 80, 32);
+	--panel = ISExpDropdown:new(200, 200, 80, 32);
+	panel = ISExpDropdown:new(
+			200, 
+			200, 
+			80 + (25 * (getCore():getOptionFontSize()-1)), 
+			math.floor(getTextManager():getFontHeight(UIFont.Small) * 2)
+		);
+
 	panel:initialize();
 	panel:instantiate();
 	panel:initChildren(self);
@@ -222,9 +255,14 @@ function ISExpBar:addDropdownPanel()
 end
 
 function ISExpBar:addConfigPanel()
-	local panel, label, tickbox, button, pw, ph, tx, ty, tw, th, optionIndex;
-	pw = 180;
+	local panel, label, tickbox, button, pw, ph, tx, ty, tw, th, optionIndex, columnWidth, skillColumns;
+	--pw = 180;
 	ph = 22;
+
+	columnWidth = math.max(barHandle.longestNameWidth + 80, 180 + (20 * (getCore():getOptionFontSize() - 1)));
+	skillColumns = 3;
+
+	pw = columnWidth * skillColumns;
 
 	panel = ISPanel:new(0, 0, pw, ph);
 	panel:initialise();
@@ -243,44 +281,81 @@ function ISExpBar:addConfigPanel()
 	-- Option tickbox
 	tx = 10;
 	ty = 35;
-	tw = 10;
-	th = 10;
+	--tw = 10;
+	--th = 10;
+	th = getTextManager():getFontHeight(UIFont.Small);
+	tw = th;
 
-	tickbox = ISTickBox:new(tx, ty, tw, th, "", self, ISExpBar.doTrackTickbox, 1, 2);
-	tickbox:initialise();
-	tickbox:setVisible(true);
+	local skillCount, skillCountTotal, skillRows, skillDoTrack, skillType, moddedSkillList, moddedSkillCount, nameWidth, nameWidthLongest, columnWidthDynamic;
 
-	optionIndex = 1;
+	-- Build a list of modded skills
+	moddedSkillList = {};
+	for pair in pairs(self.conf_trackSkill) do
+		if not self:skillIsBaseGame(pair) then
+			--print("ISExpBar(): Modded skill ", pair);
+			table.insert(moddedSkillList, pair)
+		end
+	end
+	moddedSkillCount = #moddedSkillList;
+	--print("ISExpBar(): moddedSkillCount ", moddedSkillCount);
 
-	-- Add in base game skills using the in-game order
-	local skillCount, skillIndex, skillDoTrack, skillType;
 	skillCount = #self.skill_order;
+	skillCountTotal = skillCount + moddedSkillCount;
+	skillRows = math.ceil(skillCountTotal / skillColumns);
 
-	for skillIndex=1, skillCount, 1 do
-		skillType = self.skill_order[skillIndex];
-		skillDoTrack = self.conf_trackSkill[skillType];
-		if skillDoTrack ~= nil then
-			--print("ISExpBar(): Adding base skill: ", skillType);
-			tickbox:addOption(self:getPerkNameFromType(skillType), optionIndex, self:getIcon(skillType));
-			tickbox:setSelected(optionIndex, skillDoTrack);
-			optionIndex = optionIndex + 1;
+	-- Add the base skills in order first, then add any modded skills at the end
+	for column=1, skillColumns, 1 do
+		tickbox = ISTickBox:new(tx, ty, tw, th, "", self, ISExpBar.doTrackTickbox, 1, 2);
+		tickbox:initialise();
+		tickbox:setVisible(true);
+		optionIndex = 1
+		nameWidthLongest = 0;
+
+		for skillIndex=1+((column-1)*skillRows), (column*skillRows), 1 do
+			nameWidth = 0;
+			if skillIndex <= skillCount then
+				-- Base game skill
+				skillType = self.skill_order[skillIndex];
+				skillDoTrack = self.conf_trackSkill[skillType];
+				if skillDoTrack ~= nil then
+					--print("ISExpBar(): Adding base skill: ", skillType);
+					tickbox:addOption(self:getPerkNameFromType(skillType), optionIndex, self:getIcon(skillType));
+					tickbox:setSelected(optionIndex, skillDoTrack);
+					optionIndex = optionIndex + 1;
+
+					nameWidth = getTextManager():MeasureStringX(UIFont.Small, self:getPerkNameFromType(skillType));
+				end
+			elseif skillIndex <= skillCount + moddedSkillCount then
+				-- Modded skill
+				skillType = moddedSkillList[skillIndex-skillCount]
+				if skillType ~= nil then
+					--print("ISExpBar(): Adding non-base skill: ", skillType);
+					tickbox:addOption(self:getPerkNameFromType(skillType), optionIndex, self:getIcon(skillType));
+					tickbox:setSelected(optionIndex, self.conf_trackSkill[skillType]);
+					optionIndex = optionIndex + 1;
+
+					nameWidth = getTextManager():MeasureStringX(UIFont.Small, self:getPerkNameFromType(skillType));
+				else
+					print("ISExpBar(): Null skill encountered when trying to add modded skill.");
+				end
+			end
+
+			if nameWidth > nameWidthLongest then
+				nameWidthLongest = nameWidth;
+			end
 		end
+
+		-- Dynamically reduce the column width if longest name is shorter than base coumns size
+		columnWidthDynamic = math.min(columnWidth, nameWidthLongest + 80);
+		tx = tx + columnWidthDynamic;
+		pw = pw + (columnWidthDynamic-columnWidth);
+
+		panel:addChild(tickbox);
 	end
 
-	-- Add in any extra modded skills
-	for skill_type, doTrack in pairs(self.conf_trackSkill) do
-		if not self:skillIsBaseGame(skill_type) then
-			--print("ISExpBar(): Adding non-base skill: ", skill_type);
-			tickbox:addOption(self:getPerkNameFromType(skill_type), optionIndex, self:getIcon(skill_type));
-			tickbox:setSelected(optionIndex, doTrack);
-			optionIndex = optionIndex + 1;
-		end
-	end
-
-	ph = ph + (20 * optionIndex) + 47;
+	ph = ph + ( (th+5) * (skillRows+1)) + 47;
 	panel:setHeight(ph);
-
-	panel:addChild(tickbox);
+	panel:setWidth(pw);
 
 	-- Close button
 	button = ISButton:new(math.floor(pw * .5) - 32, ph - 38, 64, 28, "Close", self, ISExpBar.closeConfigPanel);
@@ -791,7 +866,7 @@ function ISExpBar:renderExpDrops()
 		dy = self.icon_y + self.height + self:getExpDropDistance(dropIndex);
 
 		if spr ~= nil then
-			self:drawTextureScaled(spr, dx, dy, self.icon_wh, self.icon_wh, a, 1, 1, 1);
+			self:drawTextureScaled(spr, dx, dy + self.icon_drop_y_offset, self.icon_wh, self.icon_wh, a, 1, 1, 1);
 		end
 
 		dx = self.width - 4;
@@ -908,8 +983,8 @@ function ISExpBar:prerender()
 				local exp_string;
 				exp_string = string.format("%.2f", tostring(xp));
 
-				self:drawTextRight(exp_string, self.width - 3, self.icon_y + self.bar_translationOffset_y + 4, 0, 0, 0, 1, UIFont.Medium);
-				self:drawTextRight(exp_string, self.width - 5, self.icon_y + self.bar_translationOffset_y + 2, 1, 1, 1, 1, UIFont.Medium);
+				self:drawTextRight(exp_string, self.width - 3, self.icon_text_y + self.bar_translationOffset_y + 4, 0, 0, 0, 1, UIFont.Medium);
+				self:drawTextRight(exp_string, self.width - 5, self.icon_text_y + self.bar_translationOffset_y + 2, 1, 1, 1, 1, UIFont.Medium);
 			end
 			
 			self:drawRectBorderStatic(self.bar_x, self.bar_y, self.bar_w, self.bar_h, self.borderColor_inner.a, self.borderColor_inner.r, self.borderColor_inner.g, self.borderColor_inner.b);
